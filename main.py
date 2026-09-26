@@ -61,7 +61,7 @@ def remove_file(path: str):
 
 @app.post("/api/download-douyin")
 async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(...)):
-    """Tải video: Siêu Fallback 4 tầng (Cobalt -> FakeIP TikWM -> Cào HTML DLPanda -> yt-dlp)"""
+    """Tải video Douyin/TikTok với cơ chế giải mã Redirect & Multi-API chuẩn"""
     tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
     
     try:
@@ -69,91 +69,93 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
         import random
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
         }
         
         if "douyin.com" in link or "tiktok.com" in link:
             video_url = None
-            
-            # 0. Giải mã link rút gọn (v.douyin.com / vt.tiktok.com)
             actual_link = link
+            
+            # 1. Giải mã link rút gọn v.douyin.com bằng Session theo dõi redirect
             try:
-                resp = requests.head(link, allow_redirects=True, timeout=5, headers=headers)
-                actual_link = resp.url
-            except:
+                session = requests.Session()
+                res_head = session.get(link, allow_redirects=True, timeout=8, headers=headers)
+                if res_head.url and "douyin.com" in res_head.url:
+                    actual_link = res_head.url
+            except Exception:
                 pass
 
-            # 1. Thử Cobalt API (Rất mạnh và hiếm khi lỗi)
-            try:
-                cobalt_res = requests.post(
-                    "https://api.cobalt.tools/api/json",
-                    json={"url": actual_link, "vQuality": "720"},
-                    headers={
-                        "Accept": "application/json",
-                        "Content-Type": "application/json",
-                        "Origin": "https://cobalt.tools",
-                        "Referer": "https://cobalt.tools/",
-                        "User-Agent": headers['User-Agent']
-                    },
-                    timeout=8
-                ).json()
-                if cobalt_res.get("status") in ["stream", "redirect"] and "url" in cobalt_res:
-                    video_url = cobalt_res["url"]
-            except:
-                pass
-
-            # 2. Thử TikWM với Fake IP (Tránh bị chặn bởi tường lửa)
+            # 2. API Tầng 1: TikWM (Gửi link gốc đã giải mã)
             if not video_url:
                 try:
-                    fake_ip = f"{random.randint(11,250)}.{random.randint(11,250)}.{random.randint(11,250)}.{random.randint(11,250)}"
+                    fake_ip = f"{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}"
+                    api_headers = {**headers, "X-Forwarded-For": fake_ip}
                     tikwm_res = requests.post(
                         "https://www.tikwm.com/api/",
                         data={"url": actual_link, "hd": 1},
-                        headers={"User-Agent": headers['User-Agent'], "X-Forwarded-For": fake_ip},
+                        headers=api_headers,
                         timeout=8
                     ).json()
-                    if tikwm_res.get("code") == 0 and "data" in tikwm_res and "play" in tikwm_res["data"]:
-                        video_url = tikwm_res["data"]["play"]
-                        if video_url.startswith("//"): video_url = "https:" + video_url
-                except:
+                    
+                    if tikwm_res.get("code") == 0 and "data" in tikwm_res:
+                        video_url = tikwm_res["data"].get("play") or tikwm_res["data"].get("wmplay")
+                        if video_url and video_url.startswith("//"):
+                            video_url = "https:" + video_url
+                except Exception:
                     pass
 
-            # 3. Thử Web Scraping thẳng từ DLPanda (Chuyên trị Douyin)
+            # 3. API Tầng 2: Tiklydown API
             if not video_url:
                 try:
-                    panda_html = requests.get(f"https://dlpanda.com/vi?url={actual_link}", headers=headers, timeout=10).text
-                    match = re.search(r'href="([^"]+\.mp4[^"]*)"', panda_html) or re.search(r'src="([^"]+\.mp4[^"]*)"', panda_html)
+                    tikly_res = requests.get(
+                        f"https://api.tiklydown.eu.org/api/download?url={actual_link}",
+                        headers=headers,
+                        timeout=8
+                    ).json()
+                    if "video" in tikly_res and "noWatermark" in tikly_res["video"]:
+                        video_url = tikly_res["video"]["noWatermark"]
+                except Exception:
+                    pass
+
+            # 4. API Tầng 3: Tải trực tiếp bằng DLPanda HTML scraping
+            if not video_url:
+                try:
+                    panda_res = requests.get(f"https://dlpanda.com/vi?url={actual_link}", headers=headers, timeout=10).text
+                    match = re.search(r'href="([^"]+\.mp4[^"]*)"', panda_res) or re.search(r'src="([^"]+\.mp4[^"]*)"', panda_res)
                     if match:
                         video_url = match.group(1)
-                        if video_url.startswith("//"): video_url = "https:" + video_url
-                except:
+                        if video_url.startswith("//"):
+                            video_url = "https:" + video_url
+                except Exception:
                     pass
-            
-            # XỬ LÝ TẢI: Nếu lấy được Link MP4 trực tiếp từ 3 cách trên
+
+            # TẢI FILE MP4
             if video_url:
                 vid_res = requests.get(video_url, stream=True, headers=headers, timeout=30)
                 vid_res.raise_for_status()
                 with open(tmp_vid, 'wb') as f:
-                    for chunk in vid_res.iter_content(chunk_size=8192):
-                        if chunk: f.write(chunk)
+                    for chunk in vid_res.iter_content(chunk_size=16384):
+                        if chunk:
+                            f.write(chunk)
             else:
-                # 4. Bước cuối: Cố gắng dùng yt-dlp trực tiếp với link đã giải mã
+                # Tầng cuối: Thử yt-dlp với link đã giải mã
                 ydl_opts = {'format': 'best', 'outtmpl': tmp_vid, 'quiet': True, 'no_warnings': True}
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([actual_link])
-                    
+
         else:
-            # Xử lý cho YouTube, Facebook...
+            # Dành cho YouTube / Facebook
             ydl_opts = {'format': 'best', 'outtmpl': tmp_vid, 'noplaylist': True, 'quiet': True, 'no_warnings': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([link])
-                
+
         background_tasks.add_task(remove_file, tmp_vid)
         return FileResponse(tmp_vid, media_type="video/mp4", filename="downloaded_video.mp4")
-        
+
     except Exception as e:
         remove_file(tmp_vid)
-        raise HTTPException(status_code=500, detail=f"Tất cả phương pháp đều thất bại. Hãy kiểm tra lại link! (Lỗi: {str(e)})")
+        raise HTTPException(status_code=500, detail=f"Không thể lấy video Douyin qua server (Douyin chặn IP Cloud). Vui lòng dán trực tiếp link mp4 hoặc tải video về máy rồi upload. Chi tiết: {str(e)}")
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
