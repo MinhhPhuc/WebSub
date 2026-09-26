@@ -4,7 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>SubEasy AI - Studio Phụ Đề Thông Minh</title>
-    <!-- Fonts & Libraries -->
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://unpkg.com/wavesurfer.js@7"></script>
     <script src="https://unpkg.com/wavesurfer.js@7/dist/plugins/regions.min.js"></script>
@@ -36,7 +35,6 @@
         ::-webkit-scrollbar-track { background: var(--bg-main); }
         ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
 
-        /* Top Navbar */
         .navbar {
             height: 52px; background: rgba(19, 27, 46, 0.9); backdrop-filter: blur(12px);
             border-bottom: 1px solid var(--border); display: flex; align-items: center;
@@ -45,11 +43,9 @@
         .brand { display: flex; align-items: center; gap: 8px; font-weight: 700; font-size: 16px; color: var(--text-title); }
         .brand-badge { background: var(--gradient-primary); color: white; font-size: 9px; padding: 2px 6px; border-radius: 20px; text-transform: uppercase; }
 
-        /* Workspace Grid Layout - Thiết kế tối ưu độ cao chống vỡ/tràn laptop */
         .workspace { flex: 1; display: grid; grid-template-columns: 1fr 1.1fr; gap: 12px; padding: 12px; overflow: hidden; height: calc(100vh - 52px); }
         .panel { background: var(--bg-panel); border: 1px solid var(--border); border-radius: var(--radius-lg); display: flex; flex-direction: column; overflow: hidden; }
 
-        /* Left Panel */
         .left-pane { padding: 10px; gap: 8px; display: flex; flex-direction: column; overflow-y: auto; }
         
         .video-box { 
@@ -59,7 +55,6 @@
         }
         video { max-width: 100%; max-height: 100%; object-fit: contain; display: block; outline: none; }
         
-        /* Khung Che Phụ Đề Gốc (Kéo thả) */
         .video-mask {
             position: absolute; bottom: 8%; left: 5%; width: 90%; height: 40px;
             background: rgba(11, 15, 25, 0.96); backdrop-filter: blur(8px);
@@ -67,25 +62,19 @@
             align-items: center; justify-content: center; color: #a5b4fc;
             font-size: 11px; font-weight: 600; cursor: move; z-index: 8; user-select: none;
         }
-        .video-mask:hover { border-color: #a855f7; color: #fff; }
 
-        /* Subtitle Overlay (Preview) */
         .sub-overlay { position: absolute; bottom: 6%; left: 2%; width: 96%; text-align: center; pointer-events: none; z-index: 10; }
         .sub-bg { background: rgba(11, 15, 25, 0.88); padding: 6px 14px; border-radius: 8px; backdrop-filter: blur(6px); border: 1px solid rgba(255,255,255,0.12); display: inline-block; max-width: 95%; }
-        .karaoke-word { display: inline-block; margin: 0 2px; font-size: 15px; font-weight: 600; color: #fff; transition: all 0.12s ease; }
-        .karaoke-word.active { color: #38bdf8; transform: scale(1.1) translateY(-1px); text-shadow: 0 0 10px rgba(56, 189, 248, 0.6); }
+        .sub-orig { font-size: 15px; font-weight: 600; color: #fff; }
         .sub-translated { color: #facc15; font-size: 13px; margin-top: 2px; font-weight: 500; }
 
-        /* Waveform Compact */
         .waveform-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; flex-shrink: 0; }
         .waveform-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; font-size: 11px; color: var(--text-muted); font-weight: 600; }
         #waveform { border-radius: 4px; overflow: hidden; height: 45px; }
 
-        /* Tools Card */
         .tools-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 10px; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
         .tool-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 
-        /* Controls */
         button {
             background: var(--bg-card); color: var(--text-title); border: 1px solid var(--border);
             padding: 6px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px;
@@ -102,7 +91,6 @@
             padding: 6px 8px; border-radius: var(--radius-sm); font-size: 12px; outline: none;
         }
 
-        /* Right Panel - Subtitle Editor */
         .right-pane { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
         .editor-toolbar { display: flex; align-items: center; justify-content: space-between; padding-bottom: 8px; border-bottom: 1px solid var(--border); flex-wrap: wrap; gap: 6px; }
         
@@ -121,7 +109,6 @@
         .text-area-box textarea { width: 100%; background: var(--bg-input); border: 1px solid var(--border); color: var(--text-title); padding: 6px; border-radius: 4px; resize: vertical; min-height: 32px; font-size: 12px; }
         .text-area-box textarea.trans-txt { color: #facc15; border-color: rgba(250, 204, 21, 0.2); margin-top: 3px; }
 
-        /* Toast & Loading Overlay */
         #toast-container { position: fixed; bottom: 16px; right: 16px; z-index: 999; display: flex; flex-direction: column; gap: 6px; }
         .toast { background: var(--bg-card); color: var(--text-title); border: 1px solid var(--border); border-left: 4px solid var(--primary); padding: 10px 14px; border-radius: 6px; font-size: 12px; }
         .toast.success { border-left-color: #10b981; }
@@ -134,13 +121,11 @@
 </head>
 <body>
 
-<!-- Overlay Loading -->
 <div id="loadingOverlay">
     <div class="spinner"></div>
     <div id="loadingText" style="color: white; font-weight: 600; font-size: 14px;">Đang xử lý...</div>
 </div>
 
-<!-- Header / Navigation Bar -->
 <nav class="navbar">
     <div class="brand">
         <span>⚡ SubEasy AI</span>
@@ -153,13 +138,10 @@
     </div>
 </nav>
 
-<!-- Main Workspace -->
 <div class="workspace">
-    <!-- Panel Trái: Video, Waveform & Tools -->
     <div class="panel left-pane">
         <div class="video-box">
             <video id="videoPlayer" controls></video>
-            <!-- Khung Che Phụ Đề Gốc -->
             <div id="videoMask" class="video-mask">
                 <span>⬛ Ô Che Phụ Đề Gốc (Kéo để chỉnh vị trí)</span>
             </div>
@@ -202,7 +184,6 @@
         </div>
     </div>
 
-    <!-- Panel Phải: Subtitle Editor -->
     <div class="panel right-pane">
         <div class="editor-toolbar">
             <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
@@ -244,7 +225,6 @@
     const loadingText = document.getElementById('loadingText');
     const maskEl = document.getElementById('videoMask');
 
-    // Wavesurfer Core + Regions Plugin
     const ws = WaveSurfer.create({
         container: '#waveform',
         waveColor: '#1e293b',
@@ -281,11 +261,10 @@
             video.src = URL.createObjectURL(file);
             ws.loadBlob(file);
             document.getElementById('btnTranscribe').disabled = false;
-            showToast('Đã tải video vào trình chỉnh sửa', 'success');
+            showToast('Đã tải video vào ứng dụng', 'success');
         }
     }
 
-    // Web Audio API: Trích xuất và nén âm thanh mỏng nhẹ (Mono 16kHz WAV) ngay trên Browser
     async function extractAudio(file) {
         const audioCtx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 });
         const arrayBuffer = await file.arrayBuffer();
@@ -328,25 +307,27 @@
         return buffer;
     }
 
-    // 1. AI Bóc Băng
     async function startTranscribe() {
         if (!selectedFile) return;
-        toggleLoading(true, 'Đang trích xuất audio mỏng nhẹ...');
+        toggleLoading(true, 'Đang trích xuất audio...');
         try {
             const audioBlob = await extractAudio(selectedFile);
             const formData = new FormData();
             formData.append('file', audioBlob, 'audio.wav');
             formData.append('max_words', document.getElementById('maxWords').value);
 
-            toggleLoading(true, 'AI Whisper đang nhận dạng từng từ...');
+            toggleLoading(true, 'AI Groq Whisper đang bóc băng siêu tốc...');
             const res = await fetch('/api/transcribe', { method: 'POST', body: formData });
-            if (!res.ok) throw new Error('Lỗi từ Server khi bóc băng!');
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.detail || 'Lỗi khi bóc băng!');
+            }
             const data = await res.json();
             
             subtitles = data.subtitles;
             renderSubList();
             syncRegions();
-            showToast(`Thành công! Đã bóc băng ${subtitles.length} câu.`, 'success');
+            showToast(`Thành công! Đã trích xuất ${subtitles.length} câu.`, 'success');
         } catch (err) {
             showToast(err.message, 'error');
         } finally {
@@ -354,7 +335,6 @@
         }
     }
 
-    // 2. AI Dịch Thuật
     async function startTranslate() {
         if (!subtitles || !subtitles.length) return showToast('Chưa có phụ đề để dịch!', 'error');
         toggleLoading(true, 'AI đang tiến hành dịch thuật...');
@@ -381,7 +361,6 @@
         }
     }
 
-    // 3. Xuất File Phụ Đề .SRT
     function exportSRT(type) {
         if (!subtitles || !subtitles.length) {
             return showToast('Chưa có dữ liệu phụ đề để xuất!', 'error');
@@ -405,7 +384,7 @@
         const url = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = type === 'bilingual' ? 'subtitles_bilingual.srt' : 'subtitles.srt';
+        a.download = type === 'bilingual' ? 'phu_de_song_ngu.srt' : 'phu_de_goc.srt';
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
@@ -414,7 +393,6 @@
         showToast('Đã xuất file .SRT thành công!', 'success');
     }
 
-    // 4. Render Video mượt chuẩn FFmpeg
     async function exportRenderedVideo() {
         if (!selectedFile) return showToast('Vui lòng chọn video trước!', 'error');
 
@@ -475,7 +453,6 @@
         }
     }
 
-    // Đồng bộ Dải sóng âm WaveSurfer Regions
     function syncRegions() {
         wsRegions.clearRegions();
         subtitles.forEach(sub => {
@@ -509,7 +486,6 @@
         video.play();
     });
 
-    // Render danh sách thẻ phụ đề bên phải
     function renderSubList() {
         subList.innerHTML = '';
         document.getElementById('subCount').innerText = `${subtitles.length} câu`;
@@ -549,7 +525,6 @@
         clearTimeout(updateTimeout);
         updateTimeout = setTimeout(() => {
             subtitles[i][field] = val;
-            if(field === 'originalText') subtitles[i].words = [];
         }, 300);
     }
 
@@ -588,7 +563,6 @@
         }
     }
 
-    // Khung Che Phụ Đề
     function toggleVideoMask() {
         const btn = document.getElementById('btnToggleMask');
         if (maskEl.style.display === 'flex') {
@@ -626,7 +600,6 @@
         document.removeEventListener('mouseup', onStopDragMask);
     }
 
-    // Đồng bộ xem trước Phụ Đề Karaoke trên Video
     video.addEventListener('timeupdate', () => {
         const cur = video.currentTime;
         if (!ws.isPlaying()) ws.setTime(cur);
@@ -655,17 +628,7 @@
 
         if (activeIndex !== -1) {
             const sub = subtitles[activeIndex];
-            let origHtml = '';
-            if (sub.words && sub.words.length > 0) {
-                origHtml = sub.words.map(w => {
-                    const activeClass = (cur >= w.start && cur <= w.end) ? 'active' : '';
-                    return `<span class="karaoke-word ${activeClass}">${escapeHtml(w.word)}</span>`;
-                }).join('');
-            } else {
-                origHtml = `<span class="karaoke-word">${escapeHtml(sub.originalText)}</span>`;
-            }
-
-            let html = `<div class="sub-bg"><div>${origHtml}</div>`;
+            let html = `<div class="sub-bg"><div class="sub-orig">${escapeHtml(sub.originalText)}</div>`;
             if (sub.translatedText) html += `<div class="sub-translated">${escapeHtml(sub.translatedText)}</div>`;
             html += `</div>`;
             
@@ -679,7 +642,6 @@
     video.addEventListener('pause', () => ws.pause());
     document.getElementById('zoomSlider').addEventListener('input', (e) => ws.zoom(Number(e.target.value)));
 
-    // Phím tắt bàn phím
     document.addEventListener('keydown', (e) => {
         if (['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) return;
         if (e.code === 'Space') { e.preventDefault(); video.paused ? video.play() : video.pause(); }
