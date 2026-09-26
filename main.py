@@ -61,28 +61,49 @@ def remove_file(path: str):
 
 @app.post("/api/download-douyin")
 async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(...)):
-    """Tải video từ Douyin, TikTok, YouTube qua link"""
+    """Tải video: Dùng API cho Douyin/TikTok để tránh lỗi Cookie, dùng yt-dlp cho nền tảng khác"""
     tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
     
-    ydl_opts = {
-        'format': 'best',
-        'outtmpl': tmp_vid,
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True
-    }
-    
     try:
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            ydl.download([link])
+        # 1. Xử lý riêng cho Douyin và TikTok
+        if "douyin.com" in link or "tiktok.com" in link:
+            api_url = "https://www.tikwm.com/api/"
+            # Gọi API miễn phí để lấy link MP4 gốc không logo
+            res = requests.post(api_url, data={"url": link, "hd": 1}).json()
             
-        # Lập lịch xóa file này sau khi đã gửi xong cho Frontend
+            if res.get("code") == 0 and "data" in res and "play" in res["data"]:
+                video_url = res["data"]["play"]
+                if video_url.startswith("//"):
+                    video_url = "https:" + video_url
+                    
+                # Tải file MP4 về server
+                vid_res = requests.get(video_url, stream=True)
+                vid_res.raise_for_status()
+                with open(tmp_vid, 'wb') as f:
+                    for chunk in vid_res.iter_content(chunk_size=8192):
+                        f.write(chunk)
+            else:
+                raise Exception("API không thể trích xuất video. Link có thể bị lỗi hoặc video ở chế độ riêng tư.")
+                
+        # 2. Xử lý cho YouTube, Facebook, v.v. bằng yt-dlp
+        else:
+            ydl_opts = {
+                'format': 'best',
+                'outtmpl': tmp_vid,
+                'noplaylist': True,
+                'quiet': True,
+                'no_warnings': True
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([link])
+                
+        # Trả video về Frontend và lên lịch xóa file rác
         background_tasks.add_task(remove_file, tmp_vid)
         return FileResponse(tmp_vid, media_type="video/mp4", filename="downloaded_video.mp4")
+        
     except Exception as e:
         remove_file(tmp_vid)
-        raise HTTPException(status_code=500, detail=f"Không thể tải video từ link này: {str(e)}")
-
+        raise HTTPException(status_code=500, detail=f"Không thể tải video: {str(e)}")
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
