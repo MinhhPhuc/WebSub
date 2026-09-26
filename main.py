@@ -61,32 +61,53 @@ def remove_file(path: str):
 
 @app.post("/api/download-douyin")
 async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(...)):
-    """Tải video: Dùng API cho Douyin/TikTok để tránh lỗi Cookie, dùng yt-dlp cho nền tảng khác"""
+    """Tải video: Dùng Đa API cho Douyin/TikTok, tự động giải mã link rút gọn"""
     tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
     
     try:
-        # 1. Xử lý riêng cho Douyin và TikTok
         if "douyin.com" in link or "tiktok.com" in link:
-            api_url = "https://www.tikwm.com/api/"
-            # Gọi API miễn phí để lấy link MP4 gốc không logo
-            res = requests.post(api_url, data={"url": link, "hd": 1}).json()
+            video_url = None
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
             
-            if res.get("code") == 0 and "data" in res and "play" in res["data"]:
-                video_url = res["data"]["play"]
-                if video_url.startswith("//"):
-                    video_url = "https:" + video_url
-                    
-                # Tải file MP4 về server
-                vid_res = requests.get(video_url, stream=True)
-                vid_res.raise_for_status()
-                with open(tmp_vid, 'wb') as f:
-                    for chunk in vid_res.iter_content(chunk_size=8192):
-                        f.write(chunk)
-            else:
-                raise Exception("API không thể trích xuất video. Link có thể bị lỗi hoặc video ở chế độ riêng tư.")
+            # 1. Giải mã link rút gọn (v.douyin.com / vt.tiktok.com) ra link gốc
+            actual_link = link
+            try:
+                resp = requests.head(link, allow_redirects=True, timeout=5, headers=headers)
+                actual_link = resp.url
+            except:
+                pass
+
+            # 2. Thử API 1: TiklyDown (Hỗ trợ Douyin/TikTok rất ổn định)
+            try:
+                res1 = requests.get(f"https://api.tiklydown.eu.org/api/download?url={actual_link}", timeout=8).json()
+                if "video" in res1 and "noWatermark" in res1["video"]:
+                    video_url = res1["video"]["noWatermark"]
+            except:
+                pass
+            
+            # 3. Thử API 2: TikWM (Dự phòng nếu API 1 quá tải)
+            if not video_url:
+                try:
+                    res2 = requests.post("https://www.tikwm.com/api/", data={"url": actual_link, "hd": 1}, timeout=8).json()
+                    if res2.get("code") == 0 and "data" in res2 and "play" in res2["data"]:
+                        video_url = res2["data"]["play"]
+                        if video_url.startswith("//"): 
+                            video_url = "https:" + video_url
+                except:
+                    pass
+            
+            if not video_url:
+                raise Exception("Tất cả API trích xuất đều thất bại. Hãy chắc chắn link đúng và video không ở chế độ riêng tư.")
                 
-        # 2. Xử lý cho YouTube, Facebook, v.v. bằng yt-dlp
+            # 4. Tải file MP4 về server
+            vid_res = requests.get(video_url, stream=True, headers=headers, timeout=30)
+            vid_res.raise_for_status()
+            with open(tmp_vid, 'wb') as f:
+                for chunk in vid_res.iter_content(chunk_size=8192):
+                    if chunk: f.write(chunk)
+                    
         else:
+            # Xử lý cho YouTube, Facebook... bằng yt-dlp
             ydl_opts = {
                 'format': 'best',
                 'outtmpl': tmp_vid,
@@ -97,7 +118,6 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([link])
                 
-        # Trả video về Frontend và lên lịch xóa file rác
         background_tasks.add_task(remove_file, tmp_vid)
         return FileResponse(tmp_vid, media_type="video/mp4", filename="downloaded_video.mp4")
         
