@@ -61,7 +61,7 @@ def remove_file(path: str):
 
 @app.post("/api/download-douyin")
 async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(...)):
-    """Tải video Douyin/TikTok với cơ chế giải mã Redirect & Multi-API chuẩn"""
+    """Tải video Douyin/TikTok/YouTube hoàn chỉnh - Mở rộng link ngắn & thử 5 tầng API"""
     tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
     
     try:
@@ -69,43 +69,72 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
         import random
         
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'Referer': 'https://www.douyin.com/'
         }
         
-        if "douyin.com" in link or "tiktok.com" in link:
+        # 0. Tách URL chuẩn nếu người dùng dán cả đoạn văn bản chia sẻ
+        clean_link = link.strip()
+        urls_found = re.findall(r'https?://[^\s]+', clean_link)
+        if urls_found:
+            clean_link = urls_found[0]
+
+        if "douyin.com" in clean_link or "tiktok.com" in clean_link:
             video_url = None
-            actual_link = link
+            actual_link = clean_link
             
-            # 1. Giải mã link rút gọn v.douyin.com bằng Session theo dõi redirect
+            # 1. Mở rộng link rút gọn (v.douyin.com / vt.tiktok.com) -> URL thật chứa Video ID
             try:
                 session = requests.Session()
-                res_head = session.get(link, allow_redirects=True, timeout=8, headers=headers)
-                if res_head.url and "douyin.com" in res_head.url:
+                res_head = session.head(clean_link, allow_redirects=True, timeout=8, headers=headers)
+                if res_head.url and ("douyin.com" in res_head.url or "tiktok.com" in res_head.url):
                     actual_link = res_head.url
+                else:
+                    res_get = session.get(clean_link, allow_redirects=True, timeout=8, headers=headers, stream=True)
+                    actual_link = res_get.url
             except Exception:
-                pass
+                actual_link = clean_link
 
-            # 2. API Tầng 1: TikWM (Gửi link gốc đã giải mã)
+            # Trích xuất Video ID từ URL gốc nếu có
+            video_id_match = re.search(r'video/(\d+)', actual_link) or re.search(r'note/(\d+)', actual_link)
+            video_id = video_id_match.group(1) if video_id_match else None
+
+            # --- TẦNG 1: TikWM API (POST Form Data chuẩn) ---
             if not video_url:
+                for target_url in [actual_link, clean_link]:
+                    try:
+                        fake_ip = f"{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}"
+                        api_headers = {**headers, "X-Forwarded-For": fake_ip}
+                        tikwm_res = requests.post(
+                            "https://www.tikwm.com/api/",
+                            data={"url": target_url, "hd": 1},
+                            headers=api_headers,
+                            timeout=8
+                        ).json()
+                        
+                        if tikwm_res.get("code") == 0 and "data" in tikwm_res:
+                            video_url = tikwm_res["data"].get("play") or tikwm_res["data"].get("wmplay")
+                            if video_url and video_url.startswith("//"):
+                                video_url = "https:" + video_url
+                            if video_url:
+                                break
+                    except Exception:
+                        pass
+
+            # --- TẦNG 2: Douyin Official Web Detail API (Nếu có Video ID) ---
+            if not video_url and video_id:
                 try:
-                    fake_ip = f"{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}.{random.randint(11,210)}"
-                    api_headers = {**headers, "X-Forwarded-For": fake_ip}
-                    tikwm_res = requests.post(
-                        "https://www.tikwm.com/api/",
-                        data={"url": actual_link, "hd": 1},
-                        headers=api_headers,
-                        timeout=8
-                    ).json()
-                    
-                    if tikwm_res.get("code") == 0 and "data" in tikwm_res:
-                        video_url = tikwm_res["data"].get("play") or tikwm_res["data"].get("wmplay")
-                        if video_url and video_url.startswith("//"):
-                            video_url = "https:" + video_url
+                    official_api = f"https://www.douyin.com/aweme/v1/web/aweme/detail/?aweme_id={video_id}"
+                    off_res = requests.get(official_api, headers=headers, timeout=8).json()
+                    aweme_detail = off_res.get("aweme_detail", {})
+                    play_addr_list = aweme_detail.get("video", {}).get("play_addr", {}).get("url_list", [])
+                    if play_addr_list:
+                        video_url = play_addr_list[0].replace("playwm", "play")
                 except Exception:
                     pass
 
-            # 3. API Tầng 2: Tiklydown API
+            # --- TẦNG 3: Tiklydown API ---
             if not video_url:
                 try:
                     tikly_res = requests.get(
@@ -118,7 +147,7 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
                 except Exception:
                     pass
 
-            # 4. API Tầng 3: Tải trực tiếp bằng DLPanda HTML scraping
+            # --- TẦNG 4: DLPanda Web Scraping ---
             if not video_url:
                 try:
                     panda_res = requests.get(f"https://dlpanda.com/vi?url={actual_link}", headers=headers, timeout=10).text
@@ -130,32 +159,32 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
                 except Exception:
                     pass
 
-            # TẢI FILE MP4
+            # --- THỰC HIỆN TẢI STREAM VIDEO MP4 ---
             if video_url:
                 vid_res = requests.get(video_url, stream=True, headers=headers, timeout=30)
                 vid_res.raise_for_status()
                 with open(tmp_vid, 'wb') as f:
-                    for chunk in vid_res.iter_content(chunk_size=16384):
+                    for chunk in vid_res.iter_content(chunk_size=32768):
                         if chunk:
                             f.write(chunk)
             else:
-                # Tầng cuối: Thử yt-dlp với link đã giải mã
+                # --- TẦNG RÚT QUÂN: yt-dlp với link đã giải mã ---
                 ydl_opts = {'format': 'best', 'outtmpl': tmp_vid, 'quiet': True, 'no_warnings': True}
                 with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                     ydl.download([actual_link])
 
         else:
-            # Dành cho YouTube / Facebook
+            # YouTube, Facebook, v.v...
             ydl_opts = {'format': 'best', 'outtmpl': tmp_vid, 'noplaylist': True, 'quiet': True, 'no_warnings': True}
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([link])
+                ydl.download([clean_link])
 
         background_tasks.add_task(remove_file, tmp_vid)
         return FileResponse(tmp_vid, media_type="video/mp4", filename="downloaded_video.mp4")
 
     except Exception as e:
         remove_file(tmp_vid)
-        raise HTTPException(status_code=500, detail=f"Không thể lấy video Douyin qua server (Douyin chặn IP Cloud). Vui lòng dán trực tiếp link mp4 hoặc tải video về máy rồi upload. Chi tiết: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Không thể tải video từ link này. Vui lòng kiểm tra lại link hoặc thử lại! (Chi tiết: {str(e)})")
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
