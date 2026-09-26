@@ -1,21 +1,25 @@
 FROM python:3.10-slim
 
-# Cài đặt FFmpeg và các công cụ hệ thống
+# Cài đặt FFmpeg
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# BẮT BUỘC TRÊN HUGGING FACE: Tạo user non-root để có quyền đọc/ghi file video tạm
+RUN useradd -m -u 1000 user
+USER user
+ENV PATH="/home/user/.local/bin:$PATH"
+
 WORKDIR /app
 
+# Copy toàn bộ code vào container và cấp quyền sở hữu cho 'user'
+COPY --chown=user . /app
+
 # Cài đặt thư viện Python
-COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy toàn bộ mã nguồn vào Container
-COPY . .
+# Mở cổng 7860 (Hugging Face yêu cầu)
+EXPOSE 7860
 
-# Expose Cổng chạy ứng dụng
-EXPOSE 8000
-
-# Chạy FastAPI Server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Chạy FastAPI trên cổng 7860
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "7860"]
