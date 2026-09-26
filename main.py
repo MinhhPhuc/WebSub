@@ -176,7 +176,9 @@ async def render_video(video_file: UploadFile = File(...), srt_content: str = Fo
         with open(srt_path, "w", encoding="utf-8") as f: f.write(srt_content)
         filters = []
         if has_mask and mask_w > 0 and mask_h > 0: filters.append(f"drawbox=x=iw*{mask_x}:y=ih*{mask_y}:w=iw*{mask_w}:h=ih*{mask_h}:color=black@1:t=fill")
-        if srt_content.strip(): filters.append(f"subtitles='{srt_path.replace(os.sep, '/').replace(':', r'\:')}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,BorderStyle=1,Outline=2'")
+        if srt_content.strip(): 
+            escaped_srt = srt_path.replace(os.sep, '/').replace(':', '\\:')
+            filters.append(f"subtitles='{escaped_srt}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,BorderStyle=1,Outline=2'")
         
         vf_chain = ",".join(filters) if filters else "null"
         cmd = ["ffmpeg", "-y", "-i", input_vid_path, "-vf", vf_chain, "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-c:a", "copy", output_vid_path]
