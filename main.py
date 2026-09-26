@@ -19,9 +19,8 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Cấu hình API Key của Groq
 import os
-api_key = os.getenv("GROQ_API_KEY")
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 
 def format_srt_time(seconds: float) -> str:
     millis = int((seconds % 1) * 1000)
