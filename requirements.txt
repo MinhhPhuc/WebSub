@@ -3,3 +3,4 @@ uvicorn
 requests
 deep-translator
 python-multipart
+yt-dlp

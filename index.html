@@ -160,10 +160,17 @@
         </div>
 
         <div class="tools-card">
-            <div class="tool-row">
+            <!-- Ô Tải Video từ Máy -->
+            <div class="tool-row" style="border-bottom: 1px solid var(--border); padding-bottom: 8px;">
                 <input type="file" id="videoInput" accept="video/*" style="display:none;" onchange="onVideoSelected(event)">
-                <button onclick="document.getElementById('videoInput').click()">📁 Chọn Video Tải Lên</button>
+                <button onclick="document.getElementById('videoInput').click()">📁 Tải Video Từ Máy</button>
                 <span id="fileName" style="font-size: 11px; color: var(--text-muted); max-width: 180px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">Chưa chọn file</span>
+            </div>
+
+            <!-- MỚI: Ô Tải Video từ Douyin/TikTok -->
+            <div class="tool-row" style="margin-top: 4px;">
+                <input type="text" id="linkInput" placeholder="Dán link Douyin/TikTok/YouTube..." style="flex: 1; padding: 6px;">
+                <button onclick="downloadFromLink()" style="background: rgba(99, 102, 241, 0.2); border-color: #6366f1;">📥 Tải Nhanh</button>
             </div>
 
             <div class="tool-row">
@@ -305,6 +312,43 @@
             view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
         }
         return buffer;
+    }
+
+    async function downloadFromLink() {
+        const link = document.getElementById('linkInput').value.trim();
+        if (!link) return showToast('Vui lòng dán link video vào ô trống!', 'error');
+        
+        toggleLoading(true, 'Đang tải video từ mạng (có thể mất 1-2 phút tùy độ dài)...');
+        try {
+            const formData = new FormData();
+            formData.append('link', link);
+            
+            const res = await fetch('/api/download-douyin', {
+                method: 'POST',
+                body: formData
+            });
+            
+            if (!res.ok) {
+                const errData = await res.json();
+                throw new Error(errData.detail || 'Lỗi khi tải video từ link!');
+            }
+            
+            // Xử lý nạp video vào màn hình
+            const blob = await res.blob();
+            const file = new File([blob], "downloaded_video.mp4", { type: "video/mp4" });
+            
+            selectedFile = file;
+            document.getElementById('fileName').innerText = "Video Tải Từ Link";
+            video.src = URL.createObjectURL(file);
+            ws.loadBlob(file);
+            document.getElementById('btnTranscribe').disabled = false;
+            
+            showToast('Tải video thành công, bạn có thể bóc băng ngay!', 'success');
+        } catch (err) {
+            showToast(err.message, 'error');
+        } finally {
+            toggleLoading(false);
+        }
     }
 
     async function startTranscribe() {
