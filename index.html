@@ -318,11 +318,36 @@
         let link = document.getElementById('linkInput').value.trim();
         if (!link) return showToast('Vui lòng dán link video vào ô!', 'error');
 
-        toggleLoading(true, 'Đang phân tích link và tải video Douyin/TikTok...');
+        toggleLoading(true, 'Đang phân tích link qua mạng cá nhân của bạn...');
 
         try {
+            let finalLinkToDownload = link;
+
+            // BƯỚC 1: DÙNG TRÌNH DUYỆT (IP CÁ NHÂN) ĐỂ BÓC TÁCH LINK CHỐNG CLOUD BAN
+            if (link.includes('douyin.com') || link.includes('tiktok.com')) {
+                try {
+                    const apiRes = await fetch(`https://www.tikwm.com/api/?url=${encodeURIComponent(link)}&hd=1`);
+                    const data = await apiRes.json();
+                    
+                    if (data.code === 0 && data.data && data.data.play) {
+                        finalLinkToDownload = data.data.play;
+                        if (finalLinkToDownload.startsWith('//')) {
+                            finalLinkToDownload = 'https:' + finalLinkToDownload;
+                        }
+                        console.log("Đã lấy được link MP4 gốc:", finalLinkToDownload);
+                    }
+                } catch (e) {
+                    console.warn("API Trình duyệt lỗi, hệ thống sẽ tự fallback sang Server...");
+                }
+            }
+
+            // BƯỚC 2: GỬI LINK MP4 TRỰC TIẾP LÊN SERVER ĐỂ TẢI (TRÁNH LỖI CORS CỦA TRÌNH DUYỆT)
+            toggleLoading(true, 'Đang tải file video về hệ thống...');
             const formData = new FormData();
-            formData.append('link', link);
+            formData.append('link', finalLinkToDownload);
+            
+            // Gắn cờ báo hiệu cho Server biết đây là link trực tiếp
+            formData.append('is_direct', finalLinkToDownload !== link ? 'true' : 'false');
 
             const res = await fetch('/api/download-douyin', {
                 method: 'POST',
@@ -330,28 +355,26 @@
             });
 
             if (!res.ok) {
-                const errData = await res.json().catch(() => ({ detail: 'Lỗi khi tải video từ server!' }));
-                throw new Error(errData.detail || 'Không thể tải video!');
+                const errData = await res.json().catch(() => ({ detail: 'Lỗi máy chủ' }));
+                throw new Error(errData.detail || 'Không thể tải video từ server!');
             }
 
             const blob = await res.blob();
-            if (blob.size === 0) throw new Error('File video nhận được bị rỗng!');
+            if (blob.size < 5000) throw new Error('File tải về bị rỗng hoặc lỗi!');
 
-            // Nạp File vào ứng dụng
-            selectedFile = new File([blob], "douyin_video.mp4", { type: "video/mp4" });
-            
-            // Hiển thị lên trình phát video & dải sóng âm
+            // Nạp Video vào UI
+            selectedFile = new File([blob], "video.mp4", { type: "video/mp4" });
             video.src = URL.createObjectURL(selectedFile);
+            
             if (typeof ws !== 'undefined' && ws.loadBlob) {
                 ws.loadBlob(selectedFile);
             }
 
-            document.getElementById('fileName').innerText = "Video Douyin (Đã nạp)";
+            document.getElementById('fileName').innerText = "Video (Đã nạp)";
             document.getElementById('btnTranscribe').disabled = false;
-            showToast('Tải và nạp video thành công!', 'success');
+            showToast('Tải video thành công!', 'success');
 
         } catch (err) {
-            console.error(err);
             showToast('Lỗi: ' + err.message, 'error');
         } finally {
             toggleLoading(false);
