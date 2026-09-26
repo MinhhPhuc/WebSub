@@ -195,33 +195,67 @@ async def translate_subtitles(req: TranslateRequest):
 
 
 @app.post("/api/render-video")
-async def render_video(video_file: UploadFile = File(...), srt_content: str = Form(""), has_mask: bool = Form(False), mask_x: float = Form(0.0), mask_y: float = Form(0.0), mask_w: float = Form(0.0), mask_h: float = Form(0.0)):
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp_vid:
-        tmp_vid.write(await video_file.read())
-        input_vid_path = tmp_vid.name
-
-    output_vid_path = input_vid_path.replace(".mp4", "_rendered.mp4")
-    srt_path = input_vid_path.replace(".mp4", ".srt")
+async def render_video(
+    background_tasks: BackgroundTasks,
+    video_file: UploadFile = File(...),
+    srt_content: str = Form(""),
+    has_mask: bool = Form(False),
+    mask_x: float = Form(0.0),
+    mask_y: float = Form(0.0),
+    mask_w: float = Form(0.0),
+    mask_h: float = Form(0.0)
+):
+    """Render Video bằng FFmpeg - Đã tối ưu chống tràn RAM 512MB trên Render"""
+    import shutil
+    tmp_vid = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+    output_vid_path = tmp_vid.replace(".mp4", "_rendered.mp4")
+    srt_path = tmp_vid.replace(".mp4", ".srt")
 
     try:
-        with open(srt_path, "w", encoding="utf-8") as f: f.write(srt_content)
+        # 1. TIẾT KIỆM RAM: Dùng shutil stream trực tiếp file vào ổ đĩa thay vì đọc toàn bộ vào RAM
+        with open(tmp_vid, 'wb') as buffer:
+            shutil.copyfileobj(video_file.file, buffer)
+
+        with open(srt_path, "w", encoding="utf-8") as f:
+            f.write(srt_content)
+
         filters = []
-        if has_mask and mask_w > 0 and mask_h > 0: filters.append(f"drawbox=x=iw*{mask_x}:y=ih*{mask_y}:w=iw*{mask_w}:h=ih*{mask_h}:color=black@1:t=fill")
-        if srt_content.strip(): 
+        # Nếu bật che phụ đề gốc (có khung đen kéo thả)
+        if has_mask and mask_w > 0 and mask_h > 0:
+            filters.append(f"drawbox=x=iw*{mask_x}:y=ih*{mask_y}:w=iw*{mask_w}:h=ih*{mask_h}:color=black@1:t=fill")
+        
+        # In phụ đề mới lên
+        if srt_content.strip():
             escaped_srt = srt_path.replace(os.sep, '/').replace(':', '\\:')
             filters.append(f"subtitles='{escaped_srt}':force_style='FontName=Arial,FontSize=18,PrimaryColour=&H00FFFFFF&,OutlineColour=&H00000000&,BorderStyle=1,Outline=2'")
-        
+
         vf_chain = ",".join(filters) if filters else "null"
-        cmd = ["ffmpeg", "-y", "-i", input_vid_path, "-vf", vf_chain, "-c:v", "libx264", "-crf", "18", "-preset", "fast", "-c:a", "copy", output_vid_path]
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if proc.returncode != 0: raise HTTPException(status_code=500, detail="Lỗi FFmpeg Render")
         
-        return FileResponse(output_vid_path, media_type="video/mp4", filename=f"rendered_{video_file.filename}")
+        # 2. CẤU HÌNH SIÊU NHẸ CHO RENDER: preset ultrafast, giới hạn 2 threads để không bao giờ tràn 512MB RAM
+        cmd = [
+            "ffmpeg", "-y", "-i", tmp_vid,
+            "-vf", vf_chain,
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23",
+            "-c:a", "copy",
+            "-threads", "2",
+            output_vid_path
+        ]
+
+        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        if proc.returncode != 0:
+            print("FFmpeg Error:", proc.stderr)
+            raise HTTPException(status_code=500, detail=f"Lỗi FFmpeg: {proc.stderr[-200:]}")
+
+        background_tasks.add_task(remove_file, tmp_vid)
+        background_tasks.add_task(remove_file, output_vid_path)
+        background_tasks.add_task(remove_file, srt_path)
+
+        return FileResponse(output_vid_path, media_type="video/mp4", filename="rendered_video.mp4")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        remove_file(input_vid_path)
+        remove_file(tmp_vid)
+        remove_file(output_vid_path)
         remove_file(srt_path)
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     import uvicorn
