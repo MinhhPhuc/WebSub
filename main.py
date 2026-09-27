@@ -117,8 +117,12 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
+    """Bóc băng qua Groq API - Tích hợp thuật toán gộp câu ngắn và cắt câu dài thông minh"""
     if not GROQ_API_KEY:
-        raise HTTPException(status_code=500, detail="Chưa cấu hình GROQ_API_KEY")
+        raise HTTPException(
+            status_code=500, 
+            detail="Chưa cấu hình GROQ_API_KEY trên máy chủ Render (Vào tab Environment để thêm)."
+        )
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
         tmp.write(await file.read())
@@ -127,7 +131,10 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
     try:
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
-        data = {"model": "whisper-large-v3", "response_format": "verbose_json"}
+        data = {
+            "model": "whisper-large-v3",
+            "response_format": "verbose_json"
+        }
         
         with open(tmp_path, "rb") as f:
             files = {"file": ("audio.wav", f, "audio/wav")}
@@ -137,44 +144,113 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
             raise Exception(f"Lỗi Groq API ({res.status_code}): {res.text}")
             
         result = res.json()
-        segments = result.get("segments", [])
+        raw_segments = result.get("segments", [])
         
+        # --- BƯỚC 1: TIỀN XỬ LÝ & GỘP NHỮNG CÂU QUÁ NGẮN (SMART MERGING) ---
+        merged_segments = []
+        if raw_segments:
+            current_seg = None
+            
+            for seg in raw_segments:
+                text = seg.get("text", "").strip()
+                if not text:
+                    continue
+                
+                # Hàm kiểm tra độ dài (số từ nếu có khoảng trắng, số ký tự nếu không)
+                def get_length(t):
+                    return len(t.split()) if " " in t else len(t)
+                
+                if current_seg is None:
+                    current_seg = {
+                        "start": seg.get("start", 0),
+                        "end": seg.get("end", 0),
+                        "text": text
+                    }
+                else:
+                    # Tiêu chí gộp:
+                    # 1. Câu hiện tại quá ngắn (vd: < 4 ký tự/từ)
+                    # 2. Hoặc khoảng cách thời gian giữa 2 câu rất sát nhau (< 1 giây)
+                    gap = seg.get("start", 0) - current_seg["end"]
+                    len_current = get_length(current_seg["text"])
+                    
+                    if (len_current < 4) or (gap < 1.0 and (len_current + get_length(text)) <= max_words * 1.5):
+                        # Gộp text (thêm khoảng trắng nếu là ngôn ngữ Latin)
+                        sep = " " if " " in current_seg["text"] or " " in text else ""
+                        current_seg["text"] = current_seg["text"] + sep + text
+                        current_seg["end"] = seg.get("end", 0)
+                    else:
+                        merged_segments.append(current_seg)
+                        current_seg = {
+                            "start": seg.get("start", 0),
+                            "end": seg.get("end", 0),
+                            "text": text
+                        }
+            if current_seg:
+                merged_segments.append(current_seg)
+        else:
+            merged_segments = []
+
+        # --- BƯỚC 2: CẮT NHỮNG CÂU QUÁ DÀI (MAX WORDS/CHARS) VÀ TẠO OUTPUT ---
         subtitles = []
         sub_id = 1
         
-        for seg in segments:
+        for seg in merged_segments:
             start = seg.get("start", 0)
             end = seg.get("end", 0)
-            text = seg.get("text", "").strip()
-            if not text: continue
+            text = seg["text"].strip()
             
             if " " in text:
                 words = text.split()
                 if len(words) <= max_words:
-                    subtitles.append({"id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end), "startSec": round(start, 3), "endSec": round(end, 3), "originalText": text, "translatedText": "", "words": []})
+                    subtitles.append({
+                        "id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end),
+                        "startSec": round(start, 3), "endSec": round(end, 3),
+                        "originalText": text, "translatedText": "", "words": []
+                    })
                     sub_id += 1
                 else:
-                    time_per_word = (end - start) / len(words)
+                    duration = end - start
+                    time_per_word = duration / len(words) if len(words) > 0 else 0
+                    
                     for i in range(0, len(words), max_words):
                         chunk = words[i:i + max_words]
                         chunk_text = " ".join(chunk)
-                        c_start = start + (i * time_per_word)
-                        c_end = start + ((i + len(chunk)) * time_per_word)
-                        subtitles.append({"id": sub_id, "startTime": format_srt_time(c_start), "endTime": format_srt_time(c_end), "startSec": round(c_start, 3), "endSec": round(c_end, 3), "originalText": chunk_text, "translatedText": "", "words": []})
+                        chunk_start = start + (i * time_per_word)
+                        chunk_end = start + ((i + len(chunk)) * time_per_word)
+                        
+                        subtitles.append({
+                            "id": sub_id, "startTime": format_srt_time(chunk_start), "endTime": format_srt_time(chunk_end),
+                            "startSec": round(chunk_start, 3), "endSec": round(chunk_end, 3),
+                            "originalText": chunk_text, "translatedText": "", "words": []
+                        })
                         sub_id += 1
             else:
+                # Tiếng Trung/Nhật...
                 if len(text) <= max_words:
-                    subtitles.append({"id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end), "startSec": round(start, 3), "endSec": round(end, 3), "originalText": text, "translatedText": "", "words": []})
+                    subtitles.append({
+                        "id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end),
+                        "startSec": round(start, 3), "endSec": round(end, 3),
+                        "originalText": text, "translatedText": "", "words": []
+                    })
                     sub_id += 1
                 else:
-                    time_per_char = (end - start) / len(text)
+                    duration = end - start
+                    time_per_char = duration / len(text) if len(text) > 0 else 0
+                    
                     for i in range(0, len(text), max_words):
                         chunk_text = text[i:i + max_words]
-                        c_start = start + (i * time_per_char)
-                        c_end = start + ((i + len(chunk_text)) * time_per_char)
-                        subtitles.append({"id": sub_id, "startTime": format_srt_time(c_start), "endTime": format_srt_time(c_end), "startSec": round(c_start, 3), "endSec": round(c_end, 3), "originalText": chunk_text, "translatedText": "", "words": []})
+                        chunk_start = start + (i * time_per_char)
+                        chunk_end = start + ((i + len(chunk_text)) * time_per_char)
+                        
+                        subtitles.append({
+                            "id": sub_id, "startTime": format_srt_time(chunk_start), "endTime": format_srt_time(chunk_end),
+                            "startSec": round(chunk_start, 3), "endSec": round(chunk_end, 3),
+                            "originalText": chunk_text, "translatedText": "", "words": []
+                        })
                         sub_id += 1
+
         return {"subtitles": subtitles}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
