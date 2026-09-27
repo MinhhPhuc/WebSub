@@ -3,6 +3,7 @@ import tempfile
 import subprocess
 import requests
 import yt_dlp
+import re
 from typing import List, Optional
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse, HTMLResponse
@@ -115,9 +116,10 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
         remove_file(tmp_vid)
         raise HTTPException(status_code=500, detail=f"Lỗi: {str(e)} (Douyin đã thay đổi thuật toán. Bạn vui lòng tải file video MP4 về máy rồi dùng nút 'Tải Video Từ Máy')")
 
+
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
-    """Bóc băng qua Groq API - Tích hợp thuật toán gộp câu ngắn và cắt câu dài thông minh"""
+    """Bóc băng Groq Whisper - Tự động nhận diện tiếng Trung/Anh/Việt, cắt câu dài và gộp từ đơn lẻ"""
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=500, 
@@ -145,109 +147,76 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
             
         result = res.json()
         raw_segments = result.get("segments", [])
-        
-        # --- BƯỚC 1: TIỀN XỬ LÝ & GỘP NHỮNG CÂU QUÁ NGẮN (SMART MERGING) ---
-        merged_segments = []
-        if raw_segments:
-            current_seg = None
-            
-            for seg in raw_segments:
-                text = seg.get("text", "").strip()
-                if not text:
-                    continue
-                
-                # Hàm kiểm tra độ dài (số từ nếu có khoảng trắng, số ký tự nếu không)
-                def get_length(t):
-                    return len(t.split()) if " " in t else len(t)
-                
-                if current_seg is None:
-                    current_seg = {
-                        "start": seg.get("start", 0),
-                        "end": seg.get("end", 0),
-                        "text": text
-                    }
-                else:
-                    # Tiêu chí gộp:
-                    # 1. Câu hiện tại quá ngắn (vd: < 4 ký tự/từ)
-                    # 2. Hoặc khoảng cách thời gian giữa 2 câu rất sát nhau (< 1 giây)
-                    gap = seg.get("start", 0) - current_seg["end"]
-                    len_current = get_length(current_seg["text"])
-                    
-                    if (len_current < 4) or (gap < 1.0 and (len_current + get_length(text)) <= max_words * 1.5):
-                        # Gộp text (thêm khoảng trắng nếu là ngôn ngữ Latin)
-                        sep = " " if " " in current_seg["text"] or " " in text else ""
-                        current_seg["text"] = current_seg["text"] + sep + text
-                        current_seg["end"] = seg.get("end", 0)
-                    else:
-                        merged_segments.append(current_seg)
-                        current_seg = {
-                            "start": seg.get("start", 0),
-                            "end": seg.get("end", 0),
-                            "text": text
-                        }
-            if current_seg:
-                merged_segments.append(current_seg)
-        else:
-            merged_segments = []
 
-        # --- BƯỚC 2: CẮT NHỮNG CÂU QUÁ DÀI (MAX WORDS/CHARS) VÀ TẠO OUTPUT ---
-        subtitles = []
-        sub_id = 1
-        
-        for seg in merged_segments:
+        # Hàm kiểm tra xem văn bản có phải tiếng Trung/Nhật/Hàn hay không
+        def is_cjk(text: str) -> bool:
+            cjk_count = len(re.findall(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]', text))
+            return cjk_count > (len(text) * 0.25)
+
+        # --- BƯỚC 1: CẮT CỨNG CÁC CÂU QUÁ DÀI THEO MAX_WORDS/CHARACTERS ---
+        split_segs = []
+        for seg in raw_segments:
+            text = seg.get("text", "").strip()
             start = seg.get("start", 0)
             end = seg.get("end", 0)
-            text = seg["text"].strip()
-            
-            if " " in text:
-                words = text.split()
-                if len(words) <= max_words:
-                    subtitles.append({
-                        "id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end),
-                        "startSec": round(start, 3), "endSec": round(end, 3),
-                        "originalText": text, "translatedText": "", "words": []
-                    })
-                    sub_id += 1
-                else:
-                    duration = end - start
-                    time_per_word = duration / len(words) if len(words) > 0 else 0
-                    
-                    for i in range(0, len(words), max_words):
-                        chunk = words[i:i + max_words]
-                        chunk_text = " ".join(chunk)
-                        chunk_start = start + (i * time_per_word)
-                        chunk_end = start + ((i + len(chunk)) * time_per_word)
-                        
-                        subtitles.append({
-                            "id": sub_id, "startTime": format_srt_time(chunk_start), "endTime": format_srt_time(chunk_end),
-                            "startSec": round(chunk_start, 3), "endSec": round(chunk_end, 3),
-                            "originalText": chunk_text, "translatedText": "", "words": []
-                        })
-                        sub_id += 1
+            if not text:
+                continue
+
+            cjk = is_cjk(text)
+            if cjk:
+                clean_text = re.sub(r'\s+', '', text) # Xóa bỏ khoảng trắng rác trong tiếng Trung
+                units = list(clean_text)              # Cắt thành từng KÝ TỰ
             else:
-                # Tiếng Trung/Nhật...
-                if len(text) <= max_words:
-                    subtitles.append({
-                        "id": sub_id, "startTime": format_srt_time(start), "endTime": format_srt_time(end),
-                        "startSec": round(start, 3), "endSec": round(end, 3),
-                        "originalText": text, "translatedText": "", "words": []
-                    })
-                    sub_id += 1
-                else:
-                    duration = end - start
-                    time_per_char = duration / len(text) if len(text) > 0 else 0
-                    
-                    for i in range(0, len(text), max_words):
-                        chunk_text = text[i:i + max_words]
-                        chunk_start = start + (i * time_per_char)
-                        chunk_end = start + ((i + len(chunk_text)) * time_per_char)
-                        
-                        subtitles.append({
-                            "id": sub_id, "startTime": format_srt_time(chunk_start), "endTime": format_srt_time(chunk_end),
-                            "startSec": round(chunk_start, 3), "endSec": round(chunk_end, 3),
-                            "originalText": chunk_text, "translatedText": "", "words": []
-                        })
-                        sub_id += 1
+                units = text.split()                  # Cắt thành từng TỪ
+
+            limit = max_words
+            if len(units) <= limit:
+                split_segs.append({"start": start, "end": end, "text": text, "is_cjk": cjk})
+            else:
+                duration = end - start
+                unit_time = duration / len(units) if units else 0
+                for i in range(0, len(units), limit):
+                    chunk_units = units[i:i + limit]
+                    chunk_text = "".join(chunk_units) if cjk else " ".join(chunk_units)
+                    c_start = start + (i * unit_time)
+                    c_end = start + ((i + len(chunk_units)) * unit_time)
+                    split_segs.append({"start": c_start, "end": c_end, "text": chunk_text, "is_cjk": cjk})
+
+        # --- BƯỚC 2: GỘP CỨNG CÁC CÂU QUÁ NGẮN (< 4 KÝ TỰ / < 2 TỪ) ---
+        final_segs = []
+        for seg in split_segs:
+            if not final_segs:
+                final_segs.append(seg)
+                continue
+
+            prev = final_segs[-1]
+            cjk = seg["is_cjk"]
+            prev_len = len(re.sub(r'\s+', '', prev["text"])) if prev["is_cjk"] else len(prev["text"].split())
+            curr_len = len(re.sub(r'\s+', '', seg["text"])) if cjk else len(seg["text"].split())
+
+            min_thresh = 4 if cjk else 2
+
+            # Nếu câu trước hoặc câu sau quá ngắn, tự động nhập làm một
+            if (prev_len < min_thresh or curr_len < min_thresh) and (prev_len + curr_len <= max_words * 1.4):
+                sep = "" if (prev["is_cjk"] or cjk) else " "
+                prev["text"] = prev["text"] + sep + seg["text"]
+                prev["end"] = seg["end"]
+            else:
+                final_segs.append(seg)
+
+        # --- BƯỚC 3: ĐỊNH DẠNG ĐẦU RA SRT ---
+        subtitles = []
+        for sub_id, seg in enumerate(final_segs, 1):
+            subtitles.append({
+                "id": sub_id,
+                "startTime": format_srt_time(seg["start"]),
+                "endTime": format_srt_time(seg["end"]),
+                "startSec": round(seg["start"], 3),
+                "endSec": round(seg["end"], 3),
+                "originalText": seg["text"],
+                "translatedText": "",
+                "words": []
+            })
 
         return {"subtitles": subtitles}
 
