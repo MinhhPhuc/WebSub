@@ -57,12 +57,9 @@
         
         .video-mask {
             position: absolute; bottom: 8%; left: 5%; width: 90%; height: 40px;
-            background: rgba(255, 255, 255, 0.18);
-            backdrop-filter: blur(12px);
-            -webkit-backdrop-filter: blur(12px);
-            border: 1.5px dashed #6366f1; border-radius: 6px; display: none;
-            align-items: center; justify-content: center; color: #ffffff;
-            text-shadow: 0 1px 3px rgba(0,0,0,0.8);
+            background: rgba(11, 15, 25, 0.96); backdrop-filter: blur(8px);
+            border: 1px dashed #6366f1; border-radius: 6px; display: none;
+            align-items: center; justify-content: center; color: #a5b4fc;
             font-size: 11px; font-weight: 600; cursor: move; z-index: 8; user-select: none;
         }
 
@@ -145,13 +142,9 @@
     <div class="panel left-pane">
         <div class="video-box">
             <video id="videoPlayer" controls></video>
-            <!-- Ô xem trước mờ trên video player -->
-                <div id="videoMask" class="video-mask">
-                    <span>💧 Ô Làm Mờ Phụ Đề (CapCut Blur)</span>
-                </div>
-
-                <!-- Nút kích hoạt ở bảng điều khiển -->
-                <button id="btnToggleMask" onclick="toggleVideoMask()">💧 Làm mờ phụ đề gốc</button>
+            <div id="videoMask" class="video-mask">
+                <span>⬛ Ô Che Phụ Đề Gốc (Kéo để chỉnh vị trí)</span>
+            </div>
             <div id="subOverlay" class="sub-overlay"></div>
         </div>
 
@@ -650,14 +643,15 @@
             maskEl.style.display = 'none';
             btn.style.background = 'var(--bg-card)';
             btn.style.borderColor = 'var(--border)';
-            showToast('Đã ẩn khung làm mờ');
+            showToast('Đã ẩn khung che phụ đề');
         } else {
             maskEl.style.display = 'flex';
             btn.style.background = 'rgba(99, 102, 241, 0.25)';
             btn.style.borderColor = '#6366f1';
-            showToast('Kéo thả khung mờ để che phụ đề gốc');
+            showToast('Kéo ô mờ để che phụ đề gốc');
         }
     }
+
     function resizeMask(val) { maskEl.style.height = val + 'px'; }
 
     let isDraggingMask = false, startY, startTop;
