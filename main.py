@@ -119,7 +119,7 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
-    """Bóc băng Groq Whisper - Tối ưu độ chính xác bằng Language Hint, Temperature 0 & Prompt mồi"""
+    """Bóc băng Groq Whisper - Lọc bỏ 100% phụ đề ảo giác ở đoạn khoảng lặng / nhạc nền"""
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=500, 
@@ -134,13 +134,12 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
         
-        # TỐI ƯU ĐỘ CHÍNH XÁC CHO WHISPER:
         data = {
             "model": "whisper-large-v3",
             "response_format": "verbose_json",
-            "language": "zh",           # Ép Whisper nhận diện chuẩn tiếng Trung (né lầm sang tiếng khác)
-            "temperature": "0",         # Đưa về 0 để loại bỏ hoàn toàn việc bịa chữ khi có nhạc nền BGM
-            "prompt": "以下是短视频、动漫或电视剧的中文原声音频，请准确提取台词，使用简体中文。" # Prompt định hướng
+            "language": "zh",
+            "temperature": "0",
+            "prompt": "以下是短视频、动漫或电视剧的中文原声音频，请准确提取台词，使用简体中文。"
         }
         
         with open(tmp_path, "rb") as f:
@@ -153,17 +152,26 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
         result = res.json()
         raw_segments = result.get("segments", [])
 
-        # Hàm kiểm tra xem văn bản có phải tiếng Trung/Nhật/Hàn hay không
         def is_cjk(text: str) -> bool:
             cjk_count = len(re.findall(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]', text))
             return cjk_count > (len(text) * 0.25)
 
-        # 1. CẮT CÂU QUÁ DÀI
+        # 1. CẮT CÂU QUÁ DÀI & LỌC BỎ KHOẢNG LẶNG/NHẠC NỀN
         split_segs = []
         for seg in raw_segments:
             text = seg.get("text", "").strip()
             start = seg.get("start", 0)
             end = seg.get("end", 0)
+            
+            # --- BỘ LỌC CHỐNG ẢO GIÁC (HALLUCINATION FILTER) ---
+            no_speech_prob = seg.get("no_speech_prob", 0.0)
+            avg_logprob = seg.get("avg_logprob", 0.0)
+            compression_ratio = seg.get("compression_ratio", 0.0)
+
+            # Nếu xác suất KHÔNG có tiếng nói > 50% hoặc câu bị lặp từ bất thường -> BỎ QUA NGAY
+            if no_speech_prob > 0.5 or avg_logprob < -1.0 or compression_ratio > 2.4:
+                continue
+
             if not text:
                 continue
 
