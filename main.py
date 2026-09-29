@@ -228,15 +228,85 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
 
 @app.post("/api/translate")
 async def translate_subtitles(req: TranslateRequest):
+    """AI Dịch thuật siêu tốc - Gom Batch 25 câu/lần chống Google rate-limit hoàn toàn"""
     try:
-        translator = GoogleTranslator(source='auto', target=req.target_lang)
-        for item in req.subtitles:
-            if item.originalText.strip():
-                try: item.translatedText = translator.translate(item.originalText)
-                except: item.translatedText = item.originalText
-        return {"subtitles": [s.dict() for s in req.subtitles]}
+        target_lang = req.target_lang
+        subs = req.subtitles
+        if not subs:
+            return {"subtitles": []}
+
+        lines = [s.originalText.replace("\n", " ").strip() for s in subs]
+        batch_size = 25
+        translated_lines = []
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+
+        for i in range(0, len(lines), batch_size):
+            chunk = lines[i:i + batch_size]
+            joined_text = "\n".join(chunk)
+            translated_chunk_text = None
+
+            # 1. Gọi Google Translate GTX API (cho phép dịch cụm nhiều dòng cùng lúc)
+            try:
+                url = "https://translate.googleapis.com/translate_a/single"
+                params = {
+                    "client": "gtx",
+                    "sl": "auto",
+                    "tl": target_lang,
+                    "dt": "t",
+                    "q": joined_text
+                }
+                res = requests.get(url, params=params, headers=headers, timeout=10)
+                if res.status_code == 200:
+                    data = res.json()
+                    if data and isinstance(data, list) and len(data) > 0 and isinstance(data[0], list):
+                        translated_parts = [item[0] for item in data[0] if item and isinstance(item, list) and len(item) > 0 and item[0]]
+                        translated_chunk_text = "".join(translated_parts)
+            except Exception as e:
+                print("GTX Translate error:", e)
+
+            # 2. Fallback deep-translator nếu GTX bị chặn
+            if not translated_chunk_text:
+                try:
+                    translated_chunk_text = GoogleTranslator(source='auto', target=target_lang).translate(joined_text)
+                except Exception as e:
+                    print("GoogleTranslator error:", e)
+
+            # 3. Tach ket qua tra ve theo dong
+            if translated_chunk_text:
+                split_res = [line.strip() for line in translated_chunk_text.split("\n")]
+                if len(split_res) == len(chunk):
+                    translated_lines.extend(split_res)
+                else:
+                    # Neu bi lech so dong: dich tung cau le trong Lô nho
+                    for single_text in chunk:
+                        if not single_text:
+                            translated_lines.append("")
+                            continue
+                        try:
+                            url = "https://translate.googleapis.com/translate_a/single"
+                            res = requests.get(url, params={"client": "gtx", "sl": "auto", "tl": target_lang, "dt": "t", "q": single_text}, headers=headers, timeout=5)
+                            if res.status_code == 200:
+                                t_val = "".join([x[0] for x in res.json()[0] if x and x[0]])
+                                translated_lines.append(t_val)
+                            else:
+                                translated_lines.append(single_text)
+                        except:
+                            translated_lines.append(single_text)
+            else:
+                translated_lines.extend(chunk)
+
+        for idx, item in enumerate(subs):
+            if idx < len(translated_lines) and translated_lines[idx].strip():
+                item.translatedText = translated_lines[idx].strip()
+            else:
+                item.translatedText = item.originalText
+
+        return {"subtitles": [s.dict() for s in subs]}
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail=f"Lỗi dịch thuật: {str(e)}")
 
 
 @app.post("/api/render-video")
