@@ -119,7 +119,7 @@ async def download_douyin(background_tasks: BackgroundTasks, link: str = Form(..
 
 @app.post("/api/transcribe")
 async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(12)):
-    """Bóc băng Groq Whisper - Tự động nhận diện tiếng Trung/Anh/Việt, cắt câu dài và gộp từ đơn lẻ"""
+    """Bóc băng Groq Whisper - Tối ưu độ chính xác bằng Language Hint, Temperature 0 & Prompt mồi"""
     if not GROQ_API_KEY:
         raise HTTPException(
             status_code=500, 
@@ -133,9 +133,14 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
     try:
         url = "https://api.groq.com/openai/v1/audio/transcriptions"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+        
+        # TỐI ƯU ĐỘ CHÍNH XÁC CHO WHISPER:
         data = {
             "model": "whisper-large-v3",
-            "response_format": "verbose_json"
+            "response_format": "verbose_json",
+            "language": "zh",           # Ép Whisper nhận diện chuẩn tiếng Trung (né lầm sang tiếng khác)
+            "temperature": "0",         # Đưa về 0 để loại bỏ hoàn toàn việc bịa chữ khi có nhạc nền BGM
+            "prompt": "以下是短视频、动漫或电视剧的中文原声音频，请准确提取台词，使用简体中文。" # Prompt định hướng
         }
         
         with open(tmp_path, "rb") as f:
@@ -153,7 +158,7 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
             cjk_count = len(re.findall(r'[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]', text))
             return cjk_count > (len(text) * 0.25)
 
-        # --- BƯỚC 1: CẮT CỨNG CÁC CÂU QUÁ DÀI THEO MAX_WORDS/CHARACTERS ---
+        # 1. CẮT CÂU QUÁ DÀI
         split_segs = []
         for seg in raw_segments:
             text = seg.get("text", "").strip()
@@ -164,10 +169,10 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
 
             cjk = is_cjk(text)
             if cjk:
-                clean_text = re.sub(r'\s+', '', text) # Xóa bỏ khoảng trắng rác trong tiếng Trung
-                units = list(clean_text)              # Cắt thành từng KÝ TỰ
+                clean_text = re.sub(r'\s+', '', text)
+                units = list(clean_text)
             else:
-                units = text.split()                  # Cắt thành từng TỪ
+                units = text.split()
 
             limit = max_words
             if len(units) <= limit:
@@ -182,7 +187,7 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
                     c_end = start + ((i + len(chunk_units)) * unit_time)
                     split_segs.append({"start": c_start, "end": c_end, "text": chunk_text, "is_cjk": cjk})
 
-        # --- BƯỚC 2: GỘP CỨNG CÁC CÂU QUÁ NGẮN (< 4 KÝ TỰ / < 2 TỪ) ---
+        # 2. GỘP CÂU QUÁ NGẮN (< 4 KÝ TỰ)
         final_segs = []
         for seg in split_segs:
             if not final_segs:
@@ -196,7 +201,6 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
 
             min_thresh = 4 if cjk else 2
 
-            # Nếu câu trước hoặc câu sau quá ngắn, tự động nhập làm một
             if (prev_len < min_thresh or curr_len < min_thresh) and (prev_len + curr_len <= max_words * 1.4):
                 sep = "" if (prev["is_cjk"] or cjk) else " "
                 prev["text"] = prev["text"] + sep + seg["text"]
@@ -204,7 +208,7 @@ async def transcribe_audio(file: UploadFile = File(...), max_words: int = Form(1
             else:
                 final_segs.append(seg)
 
-        # --- BƯỚC 3: ĐỊNH DẠNG ĐẦU RA SRT ---
+        # 3. ĐỊNH DẠNG ĐẦU RA
         subtitles = []
         for sub_id, seg in enumerate(final_segs, 1):
             subtitles.append({
